@@ -39,10 +39,12 @@ class RiemannianDiscreteODESolver(Solver):
             and returning :math:`u_t(x)` which is assumed to lie on the tangent plane at `x`.
     """
 
-    def __init__(self, manifold: Manifold, velocity_model: ModelWrapper):
+    def __init__(self, manifold: Manifold, velocity_model: ModelWrapper, disc_path, vocab_size):
         super().__init__()
         self.manifold = manifold
         self.velocity_model = velocity_model
+        self.path = disc_path
+        self.vocabulary_size = vocab_size
 
     def sample(
         self,
@@ -65,8 +67,11 @@ class RiemannianDiscreteODESolver(Solver):
         assert method in step_fns.keys(), f"Unknown method {method}"
         step_fn = step_fns[method]
 
-        def velocity_func(x, t):
-            return self.velocity_model(x=x, t=t, **model_extras)
+        def velocity_func_rm(x, y, t, **kwargs):
+            return self.velocity_model(x=x, y=y, t=t, **kwargs)[0]
+        def velocity_func_d(x, y, t, **kwargs):
+            v,w = self.velocity_model(x=x, y=y, t=t)
+            return w
 
         # --- Factor this out.
         time_grid = torch.sort(time_grid.to(device=x_init.device)).values
@@ -104,8 +109,9 @@ class RiemannianDiscreteODESolver(Solver):
             for i, (t0, t1) in enumerate(zip(t0s, t_discretization[1:])):
                 dt = t1 - t0
                 xt_next = step_fn(
-                    velocity_func,
+                    velocity_func_rm,
                     xt,
+                    yt,
                     t0,
                     dt,
                     manifold=self.manifold,
@@ -115,7 +121,7 @@ class RiemannianDiscreteODESolver(Solver):
 
                 # Discrete step
 
-                p_1t = self.model(x=yt, t=t0.repeat(xt.shape[0]), **model_extras)
+                p_1t = velocity_func_d(x=xt, y=yt, t=t0.repeat(xt.shape[0]))
                 y1 = categorical(p_1t.to(dtype=torch.float32))
 
                 if i == n_steps - 1:
@@ -174,7 +180,7 @@ class RiemannianDiscreteODESolver(Solver):
         if return_intermediates:
             return torch.stack(xts, dim=0)
         else:
-            return xt
+            return xt, yt
 
 
 def interp(manifold, xt, xt_next, t, t_next, t_ret):
@@ -186,6 +192,7 @@ def interp(manifold, xt, xt_next, t, t_next, t_ret):
 def _midpoint_step(
     velocity_model: Callable,
     xt: Tensor,
+    yt: Tensor,
     t0: Tensor,
     dt: Tensor,
     manifold: Manifold,
@@ -207,7 +214,7 @@ def _midpoint_step(
         Tensor: tensor containing the state after the step
     """
     velocity_fn = lambda x, t: (
-        manifold.proju(x, velocity_model(x, t)) if proju else velocity_model(x, t)
+        manifold.proju(x, velocity_model(x, yt, t)) if proju else velocity_model(x, t)
     )
     projx_fn = lambda x: manifold.projx(x) if projx else x
 

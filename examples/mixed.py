@@ -151,8 +151,8 @@ class EarthDataset(torch.utils.data.Dataset):
             data_arr.append(data)
             conds_arr.append(np.ones(data.shape[0]) * i)
         
-        self.data = self.lat_long_to_cartesian(np.concat(data_arr, axis=0))
-        self.conds = np.concat(conds_arr, axis=0)
+        self.data = self.lat_long_to_cartesian(np.concatenate(data_arr, axis=0))
+        self.conds = np.concatenate(conds_arr, axis=0)
 
     def __getitem__(self, index):
         return self.data[index], self.conds[index]
@@ -189,69 +189,73 @@ def wrap(manifold, samples):
 
     return manifold.expmap(center, samples)
 
-ds = EarthDataset()
-lr = 0.001
-batch_size = 256
-iterations = 10001
-print_every = 1000
-manifold = Sphere()
-dim = 3
-hidden_dim = 512
-vocab_size = len(ds.class_names) + 1
-print('vocab ', vocab_size)
+if __name__ == '__main__':
+    ds = EarthDataset()
+    lr = 0.001
+    batch_size = 256
+    iterations = 20001
+    print_every = 1000
+    manifold = Sphere()
+    dim = 3
+    hidden_dim = 512
+    vocab_size = len(ds.class_names) + 1
+    print('vocab ', vocab_size)
 
-# velocity field model init
-vf = get_model('mlp', manifold, dim, hidden_dim, depth=6, vocab_size=vocab_size, context_len=1).to(device)
+    # velocity field model init
+    vf = get_model('mlp', manifold, dim, hidden_dim, depth=6, vocab_size=vocab_size, context_len=1).to(device)
 
-# instantiate an affine path object
-path = GeodesicProbPath(scheduler=CondOTScheduler(), manifold=manifold)
+    # instantiate an affine path object
+    path = GeodesicProbPath(scheduler=CondOTScheduler(), manifold=manifold)
 
-# init optimizer
-optim = torch.optim.Adam(vf.parameters(), lr=lr)
+    # init optimizer
+    optim = torch.optim.Adam(vf.parameters(), lr=lr)
 
-# train
-start_time = time.time()
-k = 0
-keep_going = True
-scheduler = PolynomialConvexScheduler(n=2.0)
-disc_path = MixtureDiscreteProbPath(scheduler=scheduler)
-disc_loss_fn = MixturePathGeneralizedKL(path=disc_path)
-mask_token = vocab_size - 1
-while keep_going:
-    dl = dataloader = torch.utils.data.DataLoader(ds, batch_size=batch_size, shuffle=True,
-            num_workers=0, pin_memory=True)
-    for (data,y_1) in dl:
-        k+=1
-        if k > iterations:
-            keep_going = False
-            break
-        optim.zero_grad() 
+    # train
+    start_time = time.time()
+    k = 0
+    keep_going = True
+    scheduler = PolynomialConvexScheduler(n=2.0)
+    disc_path = MixtureDiscreteProbPath(scheduler=scheduler)
+    disc_loss_fn = MixturePathGeneralizedKL(path=disc_path)
+    mask_token = vocab_size - 1
+    while keep_going:
+        dl = dataloader = torch.utils.data.DataLoader(ds, batch_size=batch_size, shuffle=True,
+                num_workers=0, pin_memory=True)
+        for (data,y_1) in dl:
+            k+=1
+            if k > iterations:
+                keep_going = False
+                break
+            optim.zero_grad() 
 
-        y_1 = y_1.to(device).long().view(-1,1)
-        y_0 = torch.zeros_like(y_1) + mask_token
+            y_1 = y_1.to(device).long().view(-1,1)
+            y_0 = torch.zeros_like(y_1) + mask_token
 
-        x_1 = data.to(device).float()
-        x_0 = torch.randn_like(x_1[:,:-1]).to(device)
-        x_0 = wrap(manifold, x_0)
+            x_1 = data.to(device).float()
+            x_0 = torch.randn_like(x_1[:,:-1]).to(device)
+            x_0 = wrap(manifold, x_0)
 
-        t = torch.rand(x_1.shape[0]).to(device) 
+            t = torch.rand(x_1.shape[0]).to(device) 
 
-        path_sample = path.sample(t=t, x_0=x_0, x_1=x_1)
-        d_path_sample = disc_path.sample(t=t, x_0=y_0, x_1=y_1)
+            path_sample = path.sample(t=t, x_0=x_0, x_1=x_1)
+            d_path_sample = disc_path.sample(t=t, x_0=y_0, x_1=y_1)
 
-        drift, logits = vf(x=path_sample.x_t,y=d_path_sample.x_t, t=path_sample.t, s=d_path_sample.t)
-        loss_r = torch.pow( drift - path_sample.dx_t, 2).mean()
-        loss_d = disc_loss_fn(logits=logits, x_1=y_1, x_t=d_path_sample.x_t, t=d_path_sample.t)
+            drift, logits = vf(x=path_sample.x_t,y=d_path_sample.x_t, t=path_sample.t, s=d_path_sample.t)
+            loss_r = torch.pow( drift - path_sample.dx_t, 2).mean()
+            loss_d = disc_loss_fn(logits=logits, x_1=y_1, x_t=d_path_sample.x_t, t=d_path_sample.t)
 
-        loss = loss_r + loss_d
+            loss = loss_r + loss_d
 
-        # optimizer step
-        loss.backward() # backward
-        optim.step() # update
-        
-        # log loss
-        if (k+1) % print_every == 0:
-            elapsed = time.time() - start_time
-            print('| iter {:6d} | {:5.2f} ms/step | loss-r {:8.3f} | loss-d {:8.3f}|' 
-                .format(k+1, elapsed*1000/print_every, loss_r.item(), loss_d.item())) 
-            start_time = time.time()
+            # optimizer step
+            loss.backward() # backward
+            optim.step() # update
+            
+            # log loss
+            if (k+1) % print_every == 0:
+                elapsed = time.time() - start_time
+                print('| iter {:6d} | {:5.2f} ms/step | loss-r {:8.3f} | loss-d {:8.3f}|' 
+                    .format(k+1, elapsed*1000/print_every, loss_r.item(), loss_d.item())) 
+                start_time = time.time()
+            
+            
+    torch.save(vf.state_dict(), 'ckpt.pt')

@@ -4,22 +4,6 @@ from torch import nn, Tensor
 from flow_matching.utils.manifolds import Manifold
 from typing import Tuple
 
-import torch
-import math
-import numpy as np
-from torch import nn
-from torch import Tensor
-import torch.nn.functional as F
-from torch.nn import Module, ModuleList
-
-from einops import rearrange, repeat, pack, unpack
-from einops.layers.torch import Rearrange
-
-from x_transformers.attend import Attend
-from x_transformers import (
-    RMSNorm,
-    FeedForward
-)
 
 
 # Activation class
@@ -62,13 +46,21 @@ class MLP(nn.Module):
             Swish(),
             nn.Linear(hidden_dim, hidden_dim),
             Swish(),
+            nn.Linear(hidden_dim, hidden_dim),
+            Swish(),
+            nn.Linear(hidden_dim, hidden_dim),
+            Swish(),
             nn.Linear(hidden_dim, input_dim),
         )
         self.d_out = nn.Sequential(
             Swish(),
             nn.Linear(hidden_dim, hidden_dim),
             Swish(),
-            nn.Linear(hidden_dim, context_len *  vocab_size),
+            nn.Linear(hidden_dim, hidden_dim),
+            Swish(),
+            nn.Linear(hidden_dim, hidden_dim),
+            Swish(),
+            nn.Linear(hidden_dim, context_len * vocab_size),
         )
 
     def forward(self, x: Tensor, t: Tensor, y : Tensor, s : Tensor) -> Tensor:
